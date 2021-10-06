@@ -1,0 +1,532 @@
+---
+title: "Wisconsin Diagnostic Breast Cancer - Machine Learning Models"
+author: "Hieu Nguyen - hieunguyenthanh@gmail.com"
+date: "10/4/2021"
+output: pdf_document
+toc: true
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+\newpage
+# Introduction  
+
+The aim of this project is to use Machine Learning models to predict whether or not a patient has breast cancer based on list of features are computed from a digitized image of a fine needle aspirate (FNA) of a breast mass. They describe characteristics of the cell nuclei present in the image.  
+
+## Goals  
+
+Prediction accuracy will be used as key metric to measure performance of difference Machine Learning models.  
+
+Our objective is to analyze dataset and find best Machine Learning models that return highest prediction accuracy.  
+
+
+## Dataset  
+  
+We will use Wisconsin Diagnostic Breast Cancer (WDBC) Data Set in this project. Detail information of this dataset can be found on this page <link> https://archive.ics.uci.edu/ml/datasets/Breast+Cancer+Wisconsin+(Diagnostic)  
+
+Dataset information:  
+
+* Number of instances: 569  
+* Number of attributes: 32 (ID, diagnosis, 30 real-valued input features)  
+* Attribute information:  
+  1. ID number  
+  2. Diagnosis (M = malignant, B = benign)  
+  3. 3-32: Ten real-valued features are computed for each cell nucleus:  
+	   a) radius (mean of distances from center to points on the perimeter)  
+	   b) texture (standard deviation of gray-scale values)  
+	   c) perimeter  
+	   d) area  
+	   e) smoothness (local variation in radius lengths)  
+	   f) compactness (perimeter^2 / area - 1.0)  
+	   g) concavity (severity of concave portions of the contour)  
+	   h) concave points (number of concave portions of the contour)  
+	   i) symmetry  
+	   j) fractal dimension ("coastline approximation" - 1)  
+	   
+     The mean, standard error, and "worst" or largest (mean of the three largest values)  
+     of these features were computed for each image, resulting in 30 features.  
+     For instance, field 3 is Mean Radius, field 13 is Radius SE, field 23 is Worst Radius.  
+     All feature values are recoded with four significant digits.  
+     
+* Missing attribute values: none  
+* Class distribution: 357 benign, 212 malignant  
+
+## Key steps  
+
+The key steps are the following:  
+
+  1. Installation of required packages and loading of libraries  
+  2. Downloading and formatting the dataset for further processing  
+  3. Analyze to understand the dataset and get insights of its features to be used in different Machine Learning models  
+  4. Partitioning of dataset into training and testing data  
+  5. Training different models on the training dataset, and testing them on the testing dataset  
+  6. Evaluation of different Mechine Learning models through computation of prediction accuracy  
+  7. Reporting of results
+
+
+\newpage
+# WDBC dataset analysis
+## Installing and loading required libraries  
+  
+Loading required package libraries to use its functions in our WDBC data analysis
+
+```{r libraries_loading, message=FALSE, warning=FALSE}
+### Check and install libraries if not exist
+if(!require(tidyverse)) install.packages("tidyverse",
+                                         repos = "http://cran.us.r-project.org")
+if(!require(caret)) install.packages("caret",
+                                     repos = "http://cran.us.r-project.org")
+if(!require(data.table)) install.packages("data.table",
+                                          repos = "http://cran.us.r-project.org")
+if(!require(matrixStats)) install.packages("matrixStats",
+                                           repos = "http://cran.us.r-project.org")
+if(!require(ggplot2)) install.packages("ggplot2",
+                                       repos = "http://cran.us.r-project.org")
+if(!require(reshape2)) install.packages("reshape2",
+                                        repos = "http://cran.us.r-project.org")
+if(!require(psych)) install.packages("psych",
+                                     repos = "http://cran.us.r-project.org")
+
+### Load libraries
+library(tidyverse)
+library(caret)
+library(data.table)
+library(matrixStats)
+library(ggplot2)
+library(reshape2)
+library(psych)
+```
+
+## WDBC Dataset download  
+
+WDBC dataset can be download from Machine Learning Repository, UCI: <link> http://archive.ics.uci.edu/ml/index.php. Dataset is in form of comma-separated so we can use read.csv() function to read.  
+
+We will use features as described in dataset to name the columns and converting __diagnostic__ values from character __"B"/"M"__ to integer __0/1__ respectively so that we can do some mathematical processing.
+
+```{r dataset loading and formating}
+dl <- tempfile()
+url <- "https://archive.ics.uci.edu/ml/machine-learning-databases"
+file <- "breast-cancer-wisconsin/wdbc.data"
+download.file(paste(url, file, sep = "/"),dl)
+
+data_raw <- read.csv(dl, header = FALSE)
+
+features_list <- c("radius", "texture", "perimeter", "area", "smoothness",
+                   "compactness", "concavity", "concave_points", "symmetry",
+                   "fractal_dimension")
+
+colnames(data_raw) <- c("ID", "diagnostic", 
+                    paste(features_list,"mean", sep = "_"), 
+                    paste(features_list,"se", sep = "_"),
+                    paste(features_list, "worst", sep = "_"))
+
+# Remove ID column and store data in wdbc
+wdbc <- data_raw[-1]
+
+# Convert diagnostic value from B/M to 0/1
+wdbc[which(wdbc[,1] == "B"),1] <- 0
+wdbc[which(wdbc[,1] == "M"),1] <- 1
+wdbc[,1] <- strtoi(wdbc[,1])  # convert character to integer
+wdbc <- as.matrix(wdbc) # convert to matrix class
+
+rm(dl, features_list, url, file)
+```
+
+## Data exploration and visualisation  
+
+Structure of dataset by using str() function:
+```{r}
+str(data_raw)
+```
+  
+We observe that dataset has 569 observation and 32 variables which are ID of each observation, diagnostic outputs and 30 features of each observation.  
+  
+Number of Benign and Malignant in __diagnostic__ output and its ratio:
+```{r B/M ratio}
+data_raw %>% group_by(diagnostic) %>% 
+  summarize(count = n(), count_percent = round(count/nrow(data_raw)*100)) %>%
+  knitr::kable()
+
+# Plot PIE chart for % of B and M
+sl <- c(sum(data_raw$diagnostic == "B"), sum(data_raw$diagnostic == "M"))
+lbs <- c("Benign", "Malignant")
+sl_pct <- round(sl / sum(sl) * 100)
+lbs <- paste(lbs, sl, sep = " - ")
+lbs <- paste(lbs, sl_pct, sep = " - ")
+lbs <- paste(lbs, "%", sep ="")
+pie(sl, labels = lbs, col = rainbow(length(sl)), main = "B and M %")
+```
+  
+There are 357 benign and 212 malignant outputs in __diagnostic__, ratio is 63% and 37% respectively. We should pay attention to this ratio to ensure keep same ratio in training and testing data when we split dataset to train Machine Learning models and test its predictions.  
+  
+  
+Calculate the correlation among variables in dataset and visualize on heatmap:
+```{r correlation matrix}
+wdbc_cor_melted <- melt(cor(wdbc))
+
+ggheatmap <- ggplot(data = wdbc_cor_melted, aes(Var2, Var1, fill = value)) + 
+  geom_tile(color = "white") + 
+  scale_fill_gradient2(low = "blue", high = "red", mid = "white", midpoint = 0,
+                       limit = c(-1,1), space = "Lab", name="Cor.") + theme_minimal() + 
+  theme(axis.text.x = element_text(angle = 90, hjust =1, vjust = 0.5, size = 7),
+        axis.text.y = element_text(size = 7), legend.text = element_text(size = 7)) +
+  coord_fixed()
+
+ggheatmap + geom_text(aes(Var2, Var1, label=round(value,1)), color="black", size=1.3) +
+  theme(axis.title.x = element_blank(), axis.title.y = element_blank(),
+        panel.grid.major = element_blank(), panel.border = element_blank(),
+        panel.background = element_blank(), axis.ticks = element_blank())
+```
+  
+  
+We observe that some variables are highly correlated to each others, like:  
+
+* perimeter_ and area_ are highly correlated with radius_  
+* all _worst features except symmetry_worst and fractal_dimension_worst are highly correlated to _mean features respectively  
+* concavity_mean is highly correlated with concave_points_mean  
+  
+  
+We make pairs-plot among the variables to see more detail of correlation:  
+
+Pairs plot of Diagnostic and all __mean__ features
+
+```{r pair-plot 1}
+pairs.panels(wdbc[,c(1:11)], pch = 21 + as.numeric(wdbc[,1]), 
+             bg = c("green", "red")[wdbc[,1] + 1], ellipses = FALSE, 
+             cex.cor = 1.2, cex.labels = 0.4)
+```
+
+\newpage
+
+Pairs Plot of Diagnostic and all __se__ features  
+  
+```{r pair-plot 2}
+pairs.panels(wdbc[,c(1, 12:21)], pch = 21 + as.numeric(wdbc[,1]), 
+             bg = c("green", "red")[wdbc[,1] + 1], ellipses = FALSE, 
+             cex.cor = 1.2, cex.labels = 0.4)
+```
+
+\newpage
+Pairs Plot of Diagnostic and all __worst__ features  
+
+```{r pair-plot 3}
+pairs.panels(wdbc[,c(1, 22:31)], pch = 21 + as.numeric(wdbc[,1]), 
+             bg = c("green", "red")[wdbc[,1] + 1], ellipses = FALSE, 
+             cex.cor = 1.2, cex.labels = 0.4)
+```
+
+\newpage
+Pairs Plot of fist 5 __mean__ and __worst__ features  
+
+```{r pair-plot 4}
+pairs.panels(wdbc[,c(2:6, 22:26)], pch = 21 + as.numeric(wdbc[,1]), 
+             bg = c("green", "red")[wdbc[,1] + 1], ellipses = FALSE, 
+             cex.cor = 1.2, cex.labels = 0.4)
+```
+
+\newpage
+Pairs Plot of last 5 __mean__ and __worst__ features  
+
+```{r pair-plot 5}
+pairs.panels(wdbc[,c(7:11, 27:31)], pch = 21 + as.numeric(wdbc[,1]), 
+             bg = c("green", "red")[wdbc[,1] + 1], ellipses = FALSE, 
+             cex.cor = 1.2, cex.labels = 0.4)
+```
+  
+Highly correlated among variables will lead to multicollinearity which may have negative affect on Machine Learning models prediction results. Removing highly correlated variables is one of solutions to deal with multicollinearity.  
+
+We will remove these variables:  
+
+* perimeter_ and area_  
+* concave_points_mean  
+* all _worst features except symmetry_worst and fractal_dimension_worst  
+
+
+and visualize correlation matrix on heatmap
+
+```{r features dropped}
+wdbc_cor_dropped_melted <- melt(cor(wdbc[,c(-4,-5,-8,-14,-15,-22:-29)]))
+
+ggheatmap_dropped <- ggplot(data = wdbc_cor_dropped_melted, 
+                            aes(Var2, Var1, fill = value)) + 
+  geom_tile(color = "white") + 
+  scale_fill_gradient2(low = "blue", high = "red", mid = "white", midpoint = 0,
+                       limit= c(-1,1), space= "Lab", name= "Cor.") + theme_minimal() + 
+  theme(axis.text.x = element_text(angle = 90, hjust = 1, vjust = 0.5, size = 7),
+        axis.text.y = element_text(size = 7),legend.text = element_text(size = 7)) +
+  coord_fixed()
+
+ggheatmap_dropped + geom_text(aes(Var2, Var1, label = round(value,2)), 
+                              color = "black", size = 1.3) +
+  theme(axis.title.x = element_blank(), axis.title.y = element_blank(),
+        panel.grid.major = element_blank(), panel.border = element_blank(),
+        panel.background = element_blank(), axis.ticks = element_blank())
+```
+  
+As shown on heatmap, there are no highly correlation among variables
+
+\newpage
+## Approach to Machine Learning modelling  
+  
+Now we have two datasets:  
+* Original __wdbc__ dataset with some highly correlated variables which lead to multicollinearity issues.  
+* __wdbc__ dropped dataset: we removed some variables that highly correlated with others.  
+  
+We will apply some Machine Learning models (glm, lda, qda, loess, knn, rf, and ensemble of these 6 models) on the two dataset and compare its prediction accuracy.  
+
+  
+### Data Preparation
+  
+Scaling data to standard distribution:  
+```{r scaling data}
+wdbc_scaled <- sweep(wdbc[,-1], 2, colMeans(wdbc[,-1]))
+wdbc_scaled <- sweep(wdbc_scaled, 2, colSds(wdbc[,-1]), FUN = "/")
+```
+  
+Creating training and testing data from two dataset:  
+```{r create training and testing data, warning=FALSE, message=FALSE}
+set.seed(1, sample.kind = "Rounding")
+test_index <- createDataPartition(y = as.factor(wdbc[,1]), 
+                                  times = 1, p = 0.25, list = FALSE)
+
+train_x <- wdbc_scaled[-test_index,]
+train_x_dropped <- train_x[,c(-3,-4,-7,-13,-14,-21:-28)]
+train_y <- as.factor(wdbc[-test_index, 1])
+
+test_x <- wdbc_scaled[test_index,]
+test_x_dropped <- test_x[,c(-3,-4,-7,-13,-14,-21:-28)]
+test_y <- as.factor(wdbc[test_index, 1])
+```
+  
+Training and testing data percentage of original dataset:  
+```{r % training and testing data}
+data.frame(total = nrow(data_raw),
+           train = nrow(train_x),
+           train_percent = round(nrow(train_x)/nrow(data_raw)*100),
+           test = nrow(test_x),
+           test_percent = round(nrow(test_x)/nrow(data_raw)*100),
+           row.names = "Number of observation") %>% 
+  knitr::kable()
+```
+  
+Cross check the ratio of B and M in training and testing data to ensure similar with original ratio data:  
+```{r cross check B/M ratio}
+data.frame(
+  diagnostic = c("B", "M"),
+  total = c(sum(data_raw$diagnostic == "B"), sum(data_raw$diagnostic == "M")),
+  total_percent = c(round(sum(data_raw$diagnostic == "B")/nrow(data_raw)*100),
+                    round(sum(data_raw$diagnostic == "M")/nrow(data_raw)*100)),
+  train_y = c(sum(train_y == 0), sum(train_y == 1)),
+  train_y_per = c(round(sum(train_y == 0)/length(train_y)*100),
+                  round(sum(train_y == 1)/length(train_y)*100)),
+  test_y = c(sum(test_y == 0), sum(test_y == 1)),
+  test_y_per = c(round(sum(test_y == 0)/length(test_y)*100),
+                 round(sum(test_y == 1)/length(test_y)*100))) %>% 
+  knitr::kable()
+```
+  
+We can see that ratio of B and M in training/ testing dataset are same as ratio in original dataset.  
+  
+  
+### Running Machine Learning Models  
+  
+We will run different Machine Learning models on two dataset to compare its prediction accuracy results.  
+
+__Logistic regression model__
+```{r glm, warning=FALSE, message=FALSE}
+set.seed(1, sample.kind = "Rounding") 
+train_glm <- train(train_x, train_y, method = "glm")
+glm_preds <- predict(train_glm, test_x)
+
+set.seed(1, sample.kind = "Rounding") 
+train_glm_dropped <- train(train_x_dropped, train_y, method = "glm")
+glm_preds_dropped <- predict(train_glm_dropped, test_x_dropped)
+
+accuracy_table <- data.frame(
+  glm = c(mean(glm_preds == test_y), mean(glm_preds_dropped == test_y)), 
+  row.names = c("Full Features","Features-Dropped"))
+```
+  
+__LDA model__
+```{r lda, warning=FALSE, message=FALSE}
+set.seed(1, sample.kind = "Rounding") 
+train_lda <- train(train_x, train_y, method = "lda")
+lda_preds <- predict(train_lda, test_x)
+
+set.seed(1, sample.kind = "Rounding") 
+train_lda_dropped <- train(train_x_dropped, train_y, method = "lda")
+lda_preds_dropped <- predict(train_lda_dropped, test_x_dropped)
+
+accuracy_table <- accuracy_table %>% mutate(lda = c(mean(lda_preds == test_y),
+                                              mean(lda_preds_dropped == test_y)))
+```
+  
+__QDA model__
+```{r qda, warning=FALSE, message=FALSE}
+set.seed(1, sample.kind = "Rounding")
+train_qda <- train(train_x, train_y, method = "qda")
+qda_preds <- predict(train_qda, test_x)
+
+set.seed(1, sample.kind = "Rounding")
+train_qda_dropped <- train(train_x_dropped, train_y, method = "qda")
+qda_preds_dropped <- predict(train_qda_dropped, test_x_dropped)
+
+accuracy_table <- accuracy_table %>% mutate(qda = c(mean(qda_preds == test_y),
+                                              mean(qda_preds_dropped == test_y)))
+```
+  
+__Loess model__
+```{r loess, warning=FALSE, message=FALSE}
+set.seed(1, sample.kind = "Rounding")
+train_loess <- train(train_x, train_y, method = "gamLoess")
+loess_preds <- predict(train_loess, test_x)
+
+set.seed(1, sample.kind = "Rounding")
+train_loess_dropped <- train(train_x_dropped, train_y, method = "gamLoess")
+loess_preds_dropped <- predict(train_loess_dropped, test_x_dropped)
+
+accuracy_table <- accuracy_table %>% mutate(loess = c(mean(loess_preds == test_y),
+                                              mean(loess_preds_dropped == test_y)))
+```
+  
+__K-nearest neighbors model__
+```{r knn, warning=FALSE, message=FALSE}
+set.seed(1, sample.kind = "Rounding")
+train_knn <- train(train_x, train_y,
+                   method = "knn", 
+                   tuneGrid = data.frame(k = seq(3, 21, 2)))
+knn_preds <- predict(train_knn, test_x)
+
+set.seed(1, sample.kind = "Rounding")
+train_knn_dropped <- train(train_x_dropped, train_y,
+                           method = "knn", 
+                           tuneGrid = data.frame(k = seq(3, 21, 2)))
+knn_preds_dropped <- predict(train_knn_dropped, test_x_dropped)
+
+accuracy_table <- accuracy_table %>% mutate(knn = c(mean(knn_preds == test_y),
+                                              mean(knn_preds_dropped == test_y)))
+```
+  
+__Random forest model__
+```{r rf, warning=FALSE, message=FALSE}
+set.seed(1, sample.kind = "Rounding")
+train_rf <- train(train_x, train_y,
+                  method = "rf",
+                  tuneGrid = data.frame(mtry = c(3, 5, 7, 9)),
+                  importance = TRUE)
+rf_preds <- predict(train_rf, test_x)
+
+set.seed(1, sample.kind = "Rounding")
+train_rf_dropped <- train(train_x_dropped, train_y,
+                          method = "rf",
+                          tuneGrid = data.frame(mtry = c(3, 5, 7, 9)),
+                          importance = TRUE)
+rf_preds_dropped <- predict(train_rf_dropped, test_x_dropped)
+
+accuracy_table <- accuracy_table %>% mutate(rf = c(mean(rf_preds == test_y),
+                                              mean(rf_preds_dropped == test_y)))
+```
+  
+__Ensemble Model__: combination of six models (glm, lda, qda, loess, knn, rf) to predict output
+```{r ensemble, warning=FALSE, message=FALSE}
+ensemble <- cbind(glm = glm_preds == 0, lda = lda_preds == 0,
+                  qda = qda_preds == 0, loess = loess_preds == 0, 
+                  knn = knn_preds == 0, rf = rf_preds == 0)
+
+ensemble_preds <- ifelse(rowMeans(ensemble) > 0.5, 0, 1)
+
+ensemble_dropped <- cbind(glm_dropped = glm_preds_dropped == 0, 
+                  lda_dropped = lda_preds_dropped == 0,
+                  qda_dropped = qda_preds_dropped == 0, 
+                  loess_dropped = loess_preds_dropped == 0, 
+                  knn_dropped = knn_preds_dropped == 0, 
+                  rf_dropped = rf_preds_dropped == 0)
+
+ensemble_preds_dropped <- ifelse(rowMeans(ensemble_dropped) > 0.5, 0, 1)
+
+accuracy_table <- accuracy_table %>% mutate(ensemble = c(mean(ensemble_preds == test_y),
+                                              mean(ensemble_preds_dropped == test_y)))
+```
+
+
+__Ensemble Mixed Model__: combination highest prediction accuracy of six models (glm, lda, qda, loess, knn, rf) to predict output
+```{r ensemble mixed, warning=FALSE, message=FALSE}
+# Create Ensemble Mixed model by:
+#   - selecting highest prediction accuracy between two datasets, then
+#   - combining results from 6 models (glm, lda, qda, loess, knn, rf) 
+#     to predict output
+if (accuracy_table[1,1] > accuracy_table[2,1]) {
+  glm_mixed <- glm_preds == 0} else {glm_mixed <- glm_preds_dropped == 0}
+
+if (accuracy_table[1,2] > accuracy_table[2,2]) {
+  lda_mixed <- lda_preds == 0} else {lda_mixed <- lda_preds_dropped == 0}
+
+if (accuracy_table[1,3] > accuracy_table[2,3]) {
+  qda_mixed <- qda_preds == 0} else {qda_mixed <- qda_preds_dropped == 0}
+
+if (accuracy_table[1,4] > accuracy_table[2,4]) {
+  loess_mixed <- loess_preds == 0} else {loess_mixed <- loess_preds_dropped == 0}
+
+if (accuracy_table[1,5] > accuracy_table[2,5]) {
+  knn_mixed <- knn_preds == 0} else {knn_mixed <- knn_preds_dropped == 0}
+
+if (accuracy_table[1,6] > accuracy_table[2,6]) {
+  rf_mixed <- rf_preds == 0} else {rf_mixed <- rf_preds_dropped == 0}
+
+ensemble_mixed <- cbind(glm_mixed = glm_mixed, lda_mixed = lda_mixed,
+                        qda_mixed = qda_mixed, loess_mixed = loess_mixed, 
+                        knn_mixed = knn_mixed, rf_mixed = rf_mixed)
+
+ensemble_preds_mixed <- ifelse(rowMeans(ensemble_mixed) > 0.5, 0, 1)
+
+accuracy_ensemble_mixed <- mean(ensemble_preds_mixed == test_y)
+```
+  
+  
+### Results  
+  
+Prediction accuracy of selected models applied on two dataset as shown in table below:  
+```{r results}
+round(accuracy_table*100,3) %>% knitr::kable()
+
+```
+
+Prediction Accuracy of Ensemble Mixed model is: __`r round(accuracy_ensemble_mixed*100,3)`__  
+
+
+We observe that:  
+
+* Models glm, loess: prediction accuracy of dataset without highly correlated variables (Features_Dropped) is higher than results on original dataset.  
+* Models lda, knn, rf: prediction accuracy of original dataset (Full Features) is higher than results of features-dropped dataset.  
+* Models qda, ensemble: both dataset have same prediction accuracy.  
+* Highest prediction accuracy is __`r round(max(accuracy_table, accuracy_ensemble_mixed)*100,3)`__  achieved from ensemble-mixed models apply on both dataset.  
+
+
+\newpage
+
+# Conclusion  
+
+## Summary  
+
+We have successfully applying different Machine Learning models on WDBC dataset and can archive prediction accuracy upto __`r round(max(accuracy_table, accuracy_ensemble_mixed)*100,3)`__. 
+
+We also observe that, by removing highly correlated variables in dataset and build ensemble-mixed model, we can archive highest prediction accuracy.
+
+
+## Future work
+
+1. Do further research to understand about affect of multicollinearity on each Machine Learning algorithms so that we can optimize our models and ensemble models to improve prediction accuracy.  
+2. Re-run these Machine Learning models again on different dataset with more observations or different ratio of training/testing on current dataset to check if Ensemble Mixed model is really can return highest prediction accuracy.  
+3. Research and apply other Machine Learning/ Deep learning algorithms on this dataset to improve prediction accuracy.
+
+
+\newpage
+# References  
+  
+1. <link> https://archive.ics.uci.edu/ml/datasets/Breast+Cancer+Wisconsin+(Diagnostic)  
+2. <link> https://rafalab.github.io/dsbook/introduction-to-machine-learning.html  
+
+
+
